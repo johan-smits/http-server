@@ -1,4 +1,5 @@
 mod file_server;
+mod proxy;
 
 use anyhow::Result;
 use futures::Future;
@@ -9,12 +10,12 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::addon::file_server::FileServer;
+use crate::addon::proxy::Proxy;
 use crate::Config;
 
 use super::middleware::Middleware;
 
-use self::file_server::FileServerHandler;
+use self::proxy::ProxyHandler;
 
 /// The main handler for the HTTP request, a HTTP response is created
 /// as a result of this handler.
@@ -32,13 +33,13 @@ pub type Handler = Box<
 
 #[derive(Clone)]
 pub struct HttpHandler {
-    file_server_handler: Arc<FileServerHandler>,
+    proxy_handler: Arc<ProxyHandler>,
     middleware: Arc<Middleware>,
 }
 
 impl HttpHandler {
     pub async fn handle_request(self, request: Request<Body>) -> Result<Response<Body>> {
-        let handler = Arc::clone(&self.file_server_handler);
+        let handler = Arc::clone(&self.proxy_handler);
         let middleware = Arc::clone(&self.middleware);
         let response = middleware.handle(request, handler.handle()).await;
 
@@ -48,13 +49,13 @@ impl HttpHandler {
 
 impl From<Arc<Config>> for HttpHandler {
     fn from(config: Arc<Config>) -> Self {
-        let file_server = FileServer::new(config.root_dir());
-        let file_server_handler = Arc::new(FileServerHandler::new(file_server));
+        let proxy = Proxy::new();
+        let proxy_handler = Arc::new(ProxyHandler::new(proxy));
         let middleware = Middleware::try_from(config).unwrap();
         let middleware = Arc::new(middleware);
 
         HttpHandler {
-            file_server_handler,
+            proxy_handler,
             middleware,
         }
     }

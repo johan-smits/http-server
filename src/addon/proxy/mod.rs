@@ -1,15 +1,35 @@
-use std::str::FromStr;
-
 use http::header::{HeaderName, HeaderValue};
-use hyper::Body;
+use hyper::client::HttpConnector;
+use hyper::{Body, Client, Response, Uri};
+use hyper_tls::HttpsConnector;
+use std::sync::Arc;
 
 use crate::server::middleware::Request;
 
-pub struct Proxy;
+pub struct Proxy {
+    client: Client<HttpsConnector<HttpConnector>>,
+}
 
 impl Proxy {
     pub fn new() -> Self {
-        Proxy
+        let https_connector = HttpsConnector::new();
+        let client = Client::builder().build::<_, hyper::Body>(https_connector);
+
+        Proxy { client }
+    }
+
+    pub async fn handle(&self, request: Request<Body>) -> Response<Body> {
+        self.remove_hbh_headers(Arc::clone(&request)).await;
+        self.add_via_header(Arc::clone(&request)).await;
+        let outogoing = self.map_incoming_request(Arc::clone(&request)).await;
+
+        println!("{:?}", outogoing);
+
+        let response = self.client.request(outogoing).await.unwrap();
+
+        println!("{:?}", response);
+
+        response
     }
 
     /// Creates a `Via` HTTP header for the provided HTTP Request.
@@ -90,6 +110,22 @@ impl Proxy {
         headers.remove(TRAILER);
         headers.remove(TRANSFER_ENCODING);
         headers.remove(UPGRADE);
+    }
+
+    /// Maps a _incoming_ HTTP request into a _outgoing_ HTTP request.
+    async fn map_incoming_request(&self, incoming: Request<Body>) -> hyper::Request<Body> {
+        let incoming = incoming.lock().await;
+        let mut request = hyper::Request::builder()
+            // .uri(incoming.uri())
+            .uri(Uri::from_static("https://hyper.rs"))
+            .method(incoming.method())
+            .body(Body::empty())
+            .unwrap();
+        let headers = request.headers_mut();
+
+        *headers = incoming.headers().clone();
+
+        request
     }
 }
 
