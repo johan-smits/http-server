@@ -49,7 +49,7 @@ impl HttpHandler {
 
 impl From<Arc<Config>> for HttpHandler {
     fn from(config: Arc<Config>) -> Self {
-        let proxy = Proxy::new();
+        let proxy = Proxy::new("https://estebanborai.com");
         let proxy_handler = Arc::new(ProxyHandler::new(proxy));
         let middleware = Middleware::try_from(config).unwrap();
         let middleware = Arc::new(middleware);

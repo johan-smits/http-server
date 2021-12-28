@@ -2,26 +2,32 @@ use http::header::{HeaderName, HeaderValue};
 use hyper::client::HttpConnector;
 use hyper::{Body, Client, Response, Uri};
 use hyper_tls::HttpsConnector;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::server::middleware::Request;
 
 pub struct Proxy {
     client: Client<HttpsConnector<HttpConnector>>,
+    upstream: Uri,
 }
 
 impl Proxy {
-    pub fn new() -> Self {
+    pub fn new(upstream: &str) -> Self {
         let https_connector = HttpsConnector::new();
         let client = Client::builder().build::<_, hyper::Body>(https_connector);
+        let upstream = Uri::from_str(upstream).unwrap();
 
-        Proxy { client }
+        Proxy { client, upstream }
     }
 
     pub async fn handle(&self, request: Request<Body>) -> Response<Body> {
         self.remove_hbh_headers(Arc::clone(&request)).await;
         self.add_via_header(Arc::clone(&request)).await;
-        let outogoing = self.map_incoming_request(Arc::clone(&request)).await;
+        let mut outogoing = self.map_incoming_request(Arc::clone(&request)).await;
+        let outgoing_headers = outogoing.headers_mut();
+
+        outgoing_headers.append("user-agent", HeaderValue::from_static("Rust http-server"));
 
         println!("{:?}", outogoing);
 
@@ -115,9 +121,9 @@ impl Proxy {
     /// Maps a _incoming_ HTTP request into a _outgoing_ HTTP request.
     async fn map_incoming_request(&self, incoming: Request<Body>) -> hyper::Request<Body> {
         let incoming = incoming.lock().await;
+        let upstream_uri = self.map_upstream_uri(incoming.uri());
         let mut request = hyper::Request::builder()
-            // .uri(incoming.uri())
-            .uri(Uri::from_static("https://hyper.rs"))
+            .uri(upstream_uri)
             .method(incoming.method())
             .body(Body::empty())
             .unwrap();
@@ -126,6 +132,23 @@ impl Proxy {
         *headers = incoming.headers().clone();
 
         request
+    }
+
+    fn map_upstream_uri(&self, incoming_uri: &Uri) -> Uri {
+        let scheme = self.upstream.scheme_str().unwrap();
+        let authority = self.upstream.authority().unwrap().as_str();
+        let path_and_query = if let Some(paq) = incoming_uri.path_and_query() {
+            paq.as_str()
+        } else {
+            ""
+        };
+
+        Uri::builder()
+            .scheme(scheme)
+            .authority(authority)
+            .path_and_query(path_and_query)
+            .build()
+            .unwrap()
     }
 }
 
