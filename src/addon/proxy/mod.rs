@@ -1,3 +1,4 @@
+use http::header::USER_AGENT;
 use http::header::{HeaderName, HeaderValue};
 use hyper::client::HttpConnector;
 use hyper::{Body, Client, Response, Uri};
@@ -23,17 +24,26 @@ impl Proxy {
 
     pub async fn handle(&self, request: Request<Body>) -> Response<Body> {
         self.remove_hbh_headers(Arc::clone(&request)).await;
-        self.add_via_header(Arc::clone(&request)).await;
+        // self.add_via_header(Arc::clone(&request)).await;
         let mut outogoing = self.map_incoming_request(Arc::clone(&request)).await;
         let outgoing_headers = outogoing.headers_mut();
 
-        outgoing_headers.append("user-agent", HeaderValue::from_static("Rust http-server"));
+        // Host must be the authority from the proxied URL
+        outgoing_headers.remove(http::header::HOST);
+        outgoing_headers.append(
+            http::header::HOST,
+            HeaderValue::from_str(self.upstream.authority().unwrap().as_str()).unwrap(),
+        );
 
-        println!("{:?}", outogoing);
+        // Specify Proxy as User Agent
+        outgoing_headers.remove(USER_AGENT).unwrap();
+        outgoing_headers.append(USER_AGENT, HeaderValue::from_static("Rust http-server/1.0"));
+
+        println!("{:#?}", outogoing);
 
         let response = self.client.request(outogoing).await.unwrap();
 
-        println!("{:?}", response);
+        println!("{:#?}", response);
 
         response
     }
@@ -130,6 +140,21 @@ impl Proxy {
         let headers = request.headers_mut();
 
         *headers = incoming.headers().clone();
+
+        // TODO: Instead of append and removing it would be great to support
+        // some kind of `set` operation which adds if not present or replaces
+        // if present.
+        //
+        // Host must be the authority from the proxied URL
+        headers.remove(http::header::HOST);
+        headers.append(
+            http::header::HOST,
+            HeaderValue::from_str(self.upstream.authority().unwrap().as_str()).unwrap(),
+        );
+
+        // Specify Proxy as User Agent
+        headers.remove(USER_AGENT).unwrap();
+        headers.append(USER_AGENT, HeaderValue::from_static("Rust http-server/1.0"));
 
         request
     }
